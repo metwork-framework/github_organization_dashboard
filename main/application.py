@@ -1,21 +1,30 @@
 import os
+import sys
 import jinja2
 import aiohttp_jinja2
 import aiohttp_github_helpers as h
 from aiohttp import web, ClientSession, BasicAuth, ClientTimeout
+from aiohttp_metwork_middlewares import mflog_middleware
+from aiohttp_metwork_middlewares import timeout_middleware_factory
 
 DRONE_SERVER = os.environ['DRONE_SERVER']
 DRONE_TOKEN = os.environ['DRONE_TOKEN']
 TOPICS = ["integration-level-5", "integration-level-4", "integration-level-3",
           "integration-level-2", "integration-level-1"]
 ORG = "metwork-framework"
-BRANCHES = ["integration", "master"]
+BRANCHES = ["integration", "master", "release_0.5", "release_0.6",
+            "release_0.7", "experimental"]
 GITHUB_USER = os.environ['GITHUB_USER']
 GITHUB_PASS = os.environ['GITHUB_PASS']
 TIMEOUT = ClientTimeout(total=20)
 AUTH = BasicAuth(GITHUB_USER, GITHUB_PASS)
 TEMPLATES_DIR = os.path.join(os.environ['MFSERV_CURRENT_PLUGIN_DIR'], 'main',
                              'templates')
+IGNORES = [("mfextaddon_mapserver", "release_0.6"),
+           ("mfextaddon_scientific", "release_0.6"),
+           ("public-website", "integration"),
+           ("docker-drone-docker-specific-image", "integration"),
+           ("docker-drone-downstream-specific-image", "integration")]
 
 
 async def drone_get_latest_status(client_session, owner, repo, branch):
@@ -51,13 +60,18 @@ async def handle(request):
             tmp = {"name": repo, "url": "https://github.com/%s/%s" %
                    (ORG, repo), "branches": []}
             for branch in BRANCHES:
-                commit_future = h.github_get_latest_commit(session, ORG, repo,
-                                                           branch)
-                status_future = drone_get_latest_status(session, ORG, repo,
-                                                        branch)
+                ignored = False
+                for ignore in IGNORES:
+                    if ignore[0] == repo and ignore[1] == branch:
+                        ignored = True
+                        break
+                if ignored:
+                    status_future = None
+                else:
+                    status_future = drone_get_latest_status(session, ORG, repo,
+                                                            branch)
                 tmp['branches'].append({
                     "name": branch,
-                    "commit_future": commit_future,
                     "status_future": status_future,
                     "github_link": "https://github.com/%s/%s/tree/%s" %
                     (ORG, repo, branch)
@@ -65,26 +79,29 @@ async def handle(request):
             repos.append(tmp)
         for repo in repos:
             for branch in repo['branches']:
-                commit = await branch['commit_future']
-                if branch['name'] == 'master' and commit:
-                    repo['master_sha'] = commit[0][0:7]
+                if branch['status_future'] is None:
+                    status = "unknown"
                 else:
-                    repo['master_sha'] = None
-                sha = None
-                age = None
-                if commit:
-                    sha = commit[0][0:7]
-                    age = commit[1]
-                branch['sha'] = sha
-                branch['age'] = age
-                del(branch['commit_future'])
-                status = await branch['status_future']
+                    status = await branch['status_future']
                 branch['drone_status'] = status
                 del(branch['status_future'])
     context = {"REPOS": repos, "BRANCHES": BRANCHES}
     response = aiohttp_jinja2.render_template('home.html', request, context)
     return response
 
-app = web.Application(debug=False)
-aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(TEMPLATES_DIR))
-app.router.add_get('/{tail:.*}', handle)
+
+def get_app(timeout=int(os.environ['MFSERV_NGINX_TIMEOUT']) + 2):
+    app = web.Application(middlewares=[timeout_middleware_factory(timeout),
+                                       mflog_middleware])
+    app.router.add_get('/{tail:.*}', handle)
+    aiohttp_jinja2.setup(app, loader=jinja2.FileSystemLoader(TEMPLATES_DIR))
+    return app
+
+
+if __name__ == '__main__':
+    if len(sys.argv) == 3:
+        web.run_app(get_app(int(sys.argv[2])), path=sys.argv[1])
+    elif len(sys.argv) == 2:
+        web.run_app(get_app(), path=sys.argv[1])
+    else:
+        web.run_app(get_app())
