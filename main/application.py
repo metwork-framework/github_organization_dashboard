@@ -27,14 +27,17 @@ IGNORES = [("mfextaddon_mapserver", "release_0.6"),
            ("docker-drone-downstream-specific-image", "integration")]
 
 
-async def drone_get_latest_status(client_session, owner, repo, branch):
+async def _drone_get_latest_status(client_session, owner, repo, branch,
+                                   page=1):
     url = "%s/api/repos/%s/%s/builds" % (DRONE_SERVER, owner, repo)
-    params = {"token": DRONE_TOKEN}
+    params = {"token": DRONE_TOKEN, "page": page}
     async with client_session.get(url, params=params) as r:
         if r.status != 200:
             return None
         try:
             builds = await r.json()
+            if len(builds) == 0:
+                return {}
             for build in builds:
                 if build['event'] != 'push':
                     continue
@@ -44,8 +47,22 @@ async def drone_get_latest_status(client_session, owner, repo, branch):
                         "url": "%s/%s/%s/%i" % (DRONE_SERVER, owner,
                                                 repo, build['number'])}
         except Exception:
-            pass
+            return {}
     return None
+
+
+async def drone_get_latest_status(client_session, owner, repo, branch):
+    page = 1
+    while True:
+        status = await _drone_get_latest_status(client_session, owner, repo,
+                                                branch, page)
+        if status is None:
+            page = page + 1
+            continue
+        if len(status) == 0:
+            return None
+        else:
+            return status
 
 
 async def handle(request):
