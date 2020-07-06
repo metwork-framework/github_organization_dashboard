@@ -12,8 +12,8 @@ DRONE_TOKEN = os.environ['DRONE_TOKEN']
 TOPICS = ["integration-level-5", "integration-level-4", "integration-level-3",
           "integration-level-2", "integration-level-1"]
 ORG = "metwork-framework"
-BRANCHES = ["integration", "master", "release_0.5", "release_0.6",
-            "release_0.7", "experimental"]
+BRANCHES = ["integration", "master", "release_0.8", "release_0.9",
+            "release_1.0", "experimental"]
 GITHUB_USER = os.environ['GITHUB_USER']
 GITHUB_PASS = os.environ['GITHUB_PASS']
 TIMEOUT = ClientTimeout(total=20)
@@ -24,7 +24,14 @@ IGNORES = [("mfextaddon_mapserver", "release_0.6"),
            ("mfextaddon_scientific", "release_0.6"),
            ("public-website", "integration"),
            ("docker-drone-docker-specific-image", "integration"),
-           ("docker-drone-downstream-specific-image", "integration")]
+           ("docker-drone-downstream-specific-image", "integration"),
+           ("mflog", "integration"),
+           ("docker-mfxxx-centos7-buildimage", "integration"),
+           ("docker-mfxxx-centos7-buildimage", "experimental"),
+           ("docker-mfxxx-centos7-buildimage", "master"),
+           ("docker-mfxxx-centos7-testimage", "integration"),
+           ("docker-mfxxx-centos7-testimage", "master"),
+           ("docker-mfxxx-centos7-testimage", "experimental")]
 
 
 async def _drone_get_latest_status(client_session, owner, repo, branch,
@@ -51,9 +58,12 @@ async def _drone_get_latest_status(client_session, owner, repo, branch,
     return None
 
 
-async def drone_get_latest_status(client_session, owner, repo, branch):
+async def drone_get_latest_status(client_session, owner, repo, branch,
+                                  max_page=10):
     page = 1
     while True:
+        if page > max_page:
+            return None
         status = await _drone_get_latest_status(client_session, owner, repo,
                                                 branch, page)
         if status is None:
